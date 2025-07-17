@@ -79,6 +79,22 @@
             border-color: #a78bfa;
             background: #fff;
         }
+        
+        select {
+            width: 100%;
+            padding: 0.75rem;
+            border-radius: 10px;
+            border: 1px solid #ddd;
+            background-color: #f9fafb;
+            font-size: 0.95rem;
+            margin-bottom: 1rem;
+            transition: border 0.2s ease;
+        }
+
+        select:focus {
+            outline: none;
+            border-color: #a78bfa;
+        }
 
         .floating-button {
             position: absolute;
@@ -134,6 +150,11 @@
         button:active {
             transform: scale(0.98);
         }
+        
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
 
         .footer {
             text-align: center;
@@ -171,7 +192,6 @@
     </style>
 </head>
 
-<!-- Google tag (gtag.js) -->
 <script async src="https://www.googletagmanager.com/gtag/js?id=G-ND11NXR1Y9"></script>
 <script>
   window.dataLayer = window.dataLayer || [];
@@ -192,8 +212,8 @@
         </div>
 
         <div class="button-group">
-            <button onclick="encode()">✨ 对仙子说</button>
-            <button onclick="decode()">🔍 仙子说了</button>
+            <button id="encodeBtn" onclick="handleEncode()">✨ 对仙子说</button>
+            <button id="decodeBtn" onclick="handleDecode()">🔍 仙子说了</button>
         </div>
 
         <label for="outputText">输出结果</label>
@@ -210,66 +230,279 @@
     <script>
         const charset = ['哦', '齁', '♥', '啊', '呜', '嗯', '唔'];
         const prefix = '仙子曰：';
+        const compressionAlgoIds = {
+            'deflate': 0x01,
+            'gzip': 0x02,
+        };
+        const decompressionAlgoMap = {
+            0x01: 'deflate',
+            0x02: 'gzip',
+        };
 
-        function toBase7(bytes) {
-            return bytes.map(byte => {
+        // --- Core Protocol Implementation ---
+
+        /**
+         * Converts a byte array to a Base7-like string representation.
+         * Each byte is converted to 3 characters from the charset.
+         */
+        function bytesToBase7(bytes) {
+            return Array.from(bytes).map(byte => {
                 let digits = [];
-                while (byte > 0) {
+                for(let i=0; i<3; i++){
                     digits.unshift(byte % 7);
                     byte = Math.floor(byte / 7);
                 }
-                while (digits.length < 3) digits.unshift(0);
                 return digits.map(d => charset[d]).join('');
             }).join('');
         }
 
-        function fromBase7(str) {
-            if (!str.startsWith(prefix)) {
-                showToast("输入内容缺少前缀：“仙子曰：”");
-                return null;
-            }
-            const body = str.slice(prefix.length);
+        /**
+         * Converts a Base7-like string back to a Uint8Array.
+         */
+        function base7ToBytes(base7String) {
             let digits = [];
-            for (let ch of body) {
+            for (let ch of base7String.replace(/❤️/g, '♥')) { // Normalize emoji variant
                 let idx = charset.indexOf(ch);
-                if (idx === -1) {
-                    showToast("非法字符: " + ch);
-                    return null;
-                }
+                if (idx === -1) throw new Error("非法字符: " + ch);
                 digits.push(idx);
             }
-            if (digits.length % 3 !== 0) {
-                showToast("编码长度非法，无法解码！");
-                return null;
-            }
+            if (digits.length % 3 !== 0) throw new Error("编码长度非法，无法解码！");
+            
             let bytes = [];
             for (let i = 0; i < digits.length; i += 3) {
                 let val = digits[i] * 49 + digits[i + 1] * 7 + digits[i + 2];
                 bytes.push(val);
             }
-            return new TextDecoder().decode(new Uint8Array(bytes));
+            return new Uint8Array(bytes);
         }
 
-        function encode() {
+        /**
+         * Encodes a number into Varint format.
+         */
+        function encodeVarint(num) {
+            const parts = [];
+            while (num >= 0x80) {
+                parts.push((num & 0x7F) | 0x80);
+                num >>>= 7;
+            }
+            parts.push(num);
+            return new Uint8Array(parts);
+        }
+
+        /**
+         * Decodes a Varint from a byte array.
+         * Returns an object { value, bytesRead }.
+         */
+        function decodeVarint(bytes) {
+            let value = 0;
+            let shift = 0;
+            let i = 0;
+            while (true) {
+                if (i >= bytes.length) throw new Error("不完整的 Varint 数据");
+                const byte = bytes[i];
+                value |= (byte & 0x7F) << shift;
+                if ((byte & 0x80) === 0) {
+                    return { value: value, bytesRead: i + 1 };
+                }
+                shift += 7;
+                i++;
+                if (shift > 31) throw new Error("Varint 值过大");
+            }
+        }
+        
+        /**
+         * Helper to read a stream into a single Uint8Array.
+         */
+        async function streamToUint8Array(stream) {
+            const reader = stream.getReader();
+            const chunks = [];
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                chunks.push(value);
+            }
+            const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+            const result = new Uint8Array(totalLength);
+            let offset = 0;
+            for (const chunk of chunks) {
+                result.set(chunk, offset);
+                offset += chunk.length;
+            }
+            return result;
+        }
+
+        /**
+         * Compresses data using the Compression Streams API.
+         */
+        async function compress(data, algorithm) {
+            if (!window.CompressionStream) {
+                throw new Error("浏览器不支持 Compression Streams API");
+            }
+            const stream = new Blob([data]).stream().pipeThrough(new CompressionStream(algorithm));
+            return await streamToUint8Array(stream);
+        }
+
+        /**
+         * Decompresses data using the Decompression Streams API.
+         */
+        async function decompress(data, algorithm) {
+             if (!window.DecompressionStream) {
+                throw new Error("浏览器不支持 Decompression Streams API");
+            }
+            const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream(algorithm));
+            return await streamToUint8Array(stream);
+        }
+        
+        /**
+         * Concatenates multiple Uint8Arrays into one.
+         */
+        function concatUint8Arrays(arrays) {
+            const totalLength = arrays.reduce((acc, arr) => acc + arr.length, 0);
+            const result = new Uint8Array(totalLength);
+            let offset = 0;
+            for (const arr of arrays) {
+                result.set(arr, offset);
+                offset += arr.length;
+            }
+            return result;
+        }
+
+
+        // --- Main Encode/Decode Logic ---
+
+        async function encode(text, compressionAlgorithm) {
+            let payload = new TextEncoder().encode(text);
+            let metadataBody = new Uint8Array(0);
+            let isCompressed = false;
+
+            // 如果长度小于 200 则不进行压缩
+            if (payload.length < 200 ){
+                compressionAlgorithm = 'none';
+            }
+
+            if (compressionAlgorithm !== 'none') {
+                payload = await compress(payload, compressionAlgorithm);
+                const algoId = compressionAlgoIds[compressionAlgorithm];
+                if (algoId === undefined) {
+                    throw new Error(`未知的压缩算法: ${compressionAlgorithm}`);
+                }
+                metadataBody = new Uint8Array([algoId]);
+                isCompressed = true;
+            }
+
+            let controlByte = 0b10000000; // New protocol flag
+            if (isCompressed) {
+                controlByte |= 0b01000000; // Compression flag
+            }
+
+            const varintLength = encodeVarint(metadataBody.length);
+            
+            const finalBytes = concatUint8Arrays([
+                new Uint8Array([controlByte]),
+                varintLength,
+                metadataBody,
+                payload
+            ]);
+            
+            const encoded = bytesToBase7(finalBytes);
+            return prefix + encoded.replace(/♥/g, '❤️'); // Use visible emoji
+        }
+
+        async function decode(text) {
+            if (!text.startsWith(prefix)) {
+                throw new Error("输入内容缺少前缀：“仙子曰：”");
+            }
+            const body = text.slice(prefix.length);
+            const bytes = base7ToBytes(body);
+
+            if (bytes.length === 0) return "";
+
+            const controlByte = bytes[0];
+            const isNewProtocol = (controlByte >> 7) & 1;
+
+            if (!isNewProtocol) {
+                // Old protocol: entire stream is UTF-8 data
+                return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+            }
+
+            // New protocol
+            let ptr = 1;
+            const { value: metadataLength, bytesRead: varintBytes } = decodeVarint(bytes.slice(ptr));
+            ptr += varintBytes;
+
+            const metadataBody = bytes.slice(ptr, ptr + metadataLength);
+            ptr += metadataLength;
+            
+            if (ptr > bytes.length) {
+                throw new Error("元信息长度超出范围，数据已损坏。")
+            }
+
+            let payload = bytes.slice(ptr);
+
+            const isCompressed = (controlByte & 0b01000000) > 0;
+            if (isCompressed) {
+                if (metadataBody.length === 0) {
+                    throw new Error("数据标记为已压缩，但未找到压缩算法ID。");
+                }
+                const algoId = metadataBody[0];
+                const algoName = decompressionAlgoMap[algoId];
+                if (!algoName) {
+                    throw new Error(`不支持的压缩算法ID: ${algoId}`);
+                }
+                payload = await decompress(payload, algoName);
+            }
+            
+            return new TextDecoder("utf-8", { fatal: true }).decode(payload);
+        }
+
+        // --- UI Event Handlers ---
+
+        function setButtonsDisabled(disabled) {
+            document.getElementById('encodeBtn').disabled = disabled;
+            document.getElementById('decodeBtn').disabled = disabled;
+        }
+
+        async function handleEncode() {
             const text = document.getElementById('inputText').value;
-            const bytes = new TextEncoder().encode(text);
-            const encoded = toBase7(Array.from(bytes));
-            const encodedWithHearts = encoded.replace(/♥/g, '❤️');
-            document.getElementById('outputText').value = prefix + encodedWithHearts;
+            if (!text) return;
+            const outputEl = document.getElementById('outputText');
+            
+            setButtonsDisabled(true);
+            outputEl.value = "编码中...";
+            try {
+                const result = await encode(text, "gzip");
+                outputEl.value = result;
+            } catch (e) {
+                outputEl.value = "";
+                showToast("编码失败: " + e.message);
+                console.error(e);
+            } finally {
+                setButtonsDisabled(false);
+            }
         }
-
-        function decode() {
+        
+        async function handleDecode() {
             const text = document.getElementById('inputText').value.trim();
-            const textWithHearts = text.replace(/❤️/g, '♥');
-            const result = fromBase7(textWithHearts);
-            if (result !== null) {
-                document.getElementById('outputText').value = result;
+            if (!text) return;
+            const outputEl = document.getElementById('outputText');
+
+            setButtonsDisabled(true);
+            outputEl.value = "解码中...";
+            try {
+                const result = await decode(text);
+                outputEl.value = result;
+            } catch (e) {
+                outputEl.value = "";
+                showToast("解码失败: " + e.message);
+                console.error(e);
+            } finally {
+                setButtonsDisabled(false);
             }
         }
 
         function copyOutput() {
             const output = document.getElementById('outputText');
-            if (!output.value.trim()) {
+            if (!output.value.trim() || output.value.startsWith("编码中") || output.value.startsWith("解码中")) {
                 showToast("没有可复制的内容！");
                 return;
             }
@@ -279,21 +512,20 @@
                 btn.innerText = '✅ 已复制！';
                 setTimeout(() => { btn.innerText = originalText; }, 1500);
             }).catch(err => {
-                showToast("复制失败：" + err);
+                showToast("复制失败：" + err.message);
             });
         }
 
         function pasteInput() {
-            const inputText = document.getElementById('inputText');
+            if (!navigator.clipboard?.readText) {
+                showToast("浏览器不支持或未授权访问剪贴板。");
+                return;
+            }
             navigator.clipboard.readText().then(text => {
-                inputText.value = text;
+                document.getElementById('inputText').value = text;
                 showToast("内容已粘贴！");
             }).catch(err => {
-                if (err.name === 'NotAllowedError') {
-                    showToast("粘贴失败：请授予浏览器访问剪贴板的权限。");
-                } else {
-                    showToast("粘贴失败：" + err);
-                }
+                showToast("粘贴失败: " + err.message);
             });
         }
 
@@ -304,7 +536,7 @@
             toast.textContent = message;
 
             toastContainer.appendChild(toast);
-            void toast.offsetWidth; // 强制重绘
+            void toast.offsetWidth; // Force reflow
             toast.classList.add('show');
 
             setTimeout(() => {
