@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <title>仙子曰</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            padding: 2rem;
+            font-family: "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+            background: #f6f8fa;
+            color: #333;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            min-height: 100vh;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 720px;
+            background: #fff;
+            border-radius: 16px;
+            padding: 2rem;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
+            animation: fadeIn 0.4s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        h1 {
+            font-size: 1.8rem;
+            text-align: center;
+            margin-bottom: 1.5rem;
+            background: linear-gradient(90deg, #d946ef, #6366f1);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        label {
+            display: block;
+            margin: 1.5rem 0 0.5rem;
+            font-weight: 600;
+        }
+
+        .textarea-wrapper {
+            position: relative;
+            margin-bottom: 1.5rem;
+        }
+
+        textarea {
+            width: 100%;
+            min-height: 120px;
+            padding: 1rem;
+            border: 1px solid #ddd;
+            border-radius: 12px;
+            font-size: 1rem;
+            resize: vertical;
+            background: #f9fafb;
+            transition: border 0.2s ease;
+        }
+
+        textarea:focus {
+            outline: none;
+            border-color: #a78bfa;
+            background: #fff;
+        }
+
+        .floating-button {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            padding: 0.3rem 0.8rem;
+            font-size: 0.85rem;
+            border-radius: 8px;
+            border: none;
+            cursor: pointer;
+            opacity: 0.9;
+            transition: background 0.2s ease;
+            color: white;
+            z-index: 1;
+        }
+
+        .floating-button:hover {
+            opacity: 1;
+        }
+
+        .paste {
+            background: linear-gradient(135deg, #facc15, #fbbf24);
+        }
+
+        .copy {
+            background: linear-gradient(135deg, #34d399, #10b981);
+        }
+
+        .button-group {
+            margin-top: 1rem;
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+
+        button {
+            flex: 1;
+            padding: 0.75rem 1.5rem;
+            font-size: 1rem;
+            font-weight: 600;
+            border: none;
+            border-radius: 10px;
+            background: linear-gradient(135deg, #c084fc, #818cf8);
+            color: white;
+            cursor: pointer;
+            transition: background 0.2s ease, transform 0.1s ease;
+        }
+
+        button:hover {
+            background: linear-gradient(135deg, #a855f7, #6366f1);
+        }
+
+        button:active {
+            transform: scale(0.98);
+        }
+
+        .footer {
+            text-align: center;
+            margin-top: 2rem;
+            font-size: 0.9rem;
+            color: #888;
+        }
+
+        .toast-container {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .toast {
+            background-color: #333;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            opacity: 0;
+            transition: opacity 0.3s ease-in-out, transform 0.3s ease-in-out;
+            transform: translateY(-20px);
+        }
+
+        .toast.show {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    </style>
+</head>
+
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-ND11NXR1Y9"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'G-ND11NXR1Y9');
+</script>
+
+<body>
+    <div class="container">
+        <h1>仙子曰：哦哦哦齁♥</h1>
+
+        <label for="inputText">输入内容</label>
+        <div class="textarea-wrapper">
+            <textarea id="inputText" placeholder="请输入要编码或解码的内容..."></textarea>
+            <button onclick="pasteInput()" class="floating-button paste" title="从剪贴板粘贴">📄 粘贴</button>
+        </div>
+
+        <div class="button-group">
+            <button onclick="encode()">✨ 对仙子说</button>
+            <button onclick="decode()">🔍 仙子说了</button>
+        </div>
+
+        <label for="outputText">输出结果</label>
+        <div class="textarea-wrapper">
+            <textarea id="outputText" readonly placeholder="结果将显示在这里..."></textarea>
+            <button onclick="copyOutput()" class="floating-button copy" title="复制到剪贴板">📋 复制</button>
+        </div>
+
+        <div class="footer">© 2025 仙子曰 <br> Build With 哦哦哦齁♥</div>
+    </div>
+
+    <div id="toastContainer" class="toast-container"></div>
+
+    <script>
+        const charset = ['哦', '齁', '♥', '啊', '呜', '嗯', '唔'];
+        const prefix = '仙子曰：';
+
+        function toBase7(bytes) {
+            return bytes.map(byte => {
+                let digits = [];
+                while (byte > 0) {
+                    digits.unshift(byte % 7);
+                    byte = Math.floor(byte / 7);
+                }
+                while (digits.length < 3) digits.unshift(0);
+                return digits.map(d => charset[d]).join('');
+            }).join('');
+        }
+
+        function fromBase7(str) {
+            if (!str.startsWith(prefix)) {
+                showToast("输入内容缺少前缀：“仙子曰：”");
+                return null;
+            }
+            const body = str.slice(prefix.length);
+            let digits = [];
+            for (let ch of body) {
+                let idx = charset.indexOf(ch);
+                if (idx === -1) {
+                    showToast("非法字符: " + ch);
+                    return null;
+                }
+                digits.push(idx);
+            }
+            if (digits.length % 3 !== 0) {
+                showToast("编码长度非法，无法解码！");
+                return null;
+            }
+            let bytes = [];
+            for (let i = 0; i < digits.length; i += 3) {
+                let val = digits[i] * 49 + digits[i + 1] * 7 + digits[i + 2];
+                bytes.push(val);
+            }
+            return new TextDecoder().decode(new Uint8Array(bytes));
+        }
+
+        function encode() {
+            const text = document.getElementById('inputText').value;
+            const bytes = new TextEncoder().encode(text);
+            const encoded = toBase7(Array.from(bytes));
+            const encodedWithHearts = encoded.replace(/♥/g, '❤️');
+            document.getElementById('outputText').value = prefix + encodedWithHearts;
+        }
+
+        function decode() {
+            const text = document.getElementById('inputText').value.trim();
+            const textWithHearts = text.replace(/❤️/g, '♥');
+            const result = fromBase7(textWithHearts);
+            if (result !== null) {
+                document.getElementById('outputText').value = result;
+            }
+        }
+
+        function copyOutput() {
+            const output = document.getElementById('outputText');
+            if (!output.value.trim()) {
+                showToast("没有可复制的内容！");
+                return;
+            }
+            navigator.clipboard.writeText(output.value).then(() => {
+                const btn = document.querySelector('.copy');
+                const originalText = btn.innerText;
+                btn.innerText = '✅ 已复制！';
+                setTimeout(() => { btn.innerText = originalText; }, 1500);
+            }).catch(err => {
+                showToast("复制失败：" + err);
+            });
+        }
+
+        function pasteInput() {
+            const inputText = document.getElementById('inputText');
+            navigator.clipboard.readText().then(text => {
+                inputText.value = text;
+                showToast("内容已粘贴！");
+            }).catch(err => {
+                if (err.name === 'NotAllowedError') {
+                    showToast("粘贴失败：请授予浏览器访问剪贴板的权限。");
+                } else {
+                    showToast("粘贴失败：" + err);
+                }
+            });
+        }
+
+        function showToast(message, duration = 3000) {
+            const toastContainer = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.classList.add('toast');
+            toast.textContent = message;
+
+            toastContainer.appendChild(toast);
+            void toast.offsetWidth; // 强制重绘
+            toast.classList.add('show');
+
+            setTimeout(() => {
+                toast.classList.remove('show');
+                toast.addEventListener('transitionend', () => toast.remove(), { once: true });
+            }, duration);
+        }
+    </script>
+</body>
+</html>
